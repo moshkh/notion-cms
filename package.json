@@ -1,17 +1,15 @@
 {
-  "name": "p.notion-cms",
+  "name": "notion-cms-webhook",
   "version": "1.0.0",
-  "main": "index.js",
+  "description": "Cloudflare Worker for handling Notion webhooks",
+  "main": "src/worker.ts",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy"
   },
-  "keywords": [],
-  "author": "",
-  "license": "ISC",
-  "type": "commonjs",
-  "description": "",
   "devDependencies": {
-    "@types/node": "^24.3.0",
-    "typescript": "^5.9.2"
+    "@cloudflare/workers-types": "^4.20240208.0",
+    "typescript": "^5.3.3",
+    "wrangler": "^3.28.2"
   }
 }
