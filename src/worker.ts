@@ -1,4 +1,5 @@
 // Web Crypto API is available globally in Cloudflare Workers
+import { Client } from "@notionhq/client";
 
 interface Env {
   NOTION_CMS_USERS: KVNamespace;
@@ -8,7 +9,20 @@ interface Env {
 interface UserData {
   verification_secret: string;
   // other user data...
-  webhook_url: string;
+  notion_token: string;
+  webhook_url?: string;
+  notion_mapping?: object;
+  html_mapping?: object;
+}
+
+interface NotionWebhookPayload {
+  type: string;
+  entity: {
+    type: string;
+    id: string;
+    [key: string]: any; // This is to allow for other properties that may be added to the payload
+  };
+  [key: string]: any; // This is to allow for other properties that may be added to the payload
 }
 
 export default {
@@ -98,7 +112,35 @@ export default {
       }
 
       // Parse the validated payload
-      const payload = JSON.parse(body);
+      const payload: NotionWebhookPayload = JSON.parse(body);
+
+      // Only process properties_updated webhooks
+      if (payload.type !== "page.properties_updated") {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: "Webhook received but not relevant type",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      // Only process page entity type
+      if (payload.entity?.type !== "page") {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: "Webhook received but entity type is not 'page'",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
 
       // Generate a unique ID for this webhook event
       const eventId = crypto.randomUUID();
@@ -117,6 +159,29 @@ export default {
           expirationTtl: 180 * 24 * 60 * 60,
         }
       );
+
+      const notion = new Client({
+        auth: userData.notion_token,
+        fetch: fetch.bind(globalThis),
+      });
+
+      const pageId: string = payload.entity.id;
+
+      try {
+        const page = await notion.pages.retrieve({ page_id: pageId });
+      } catch (error) {
+        console.error("Error retrieving page:", error);
+        return new Response(
+          JSON.stringify({
+            success: false,
+            error: "Failed to retrieve Notion page",
+          }),
+          {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
 
       return new Response(
         JSON.stringify({

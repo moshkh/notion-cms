@@ -17,6 +17,9 @@
       "id": "7fb54e8411694a81803e46c87089bcbe"
     }
   ],
+  "observability": {
+    "enabled": true
+  },
   "env": {
     "dev": {
       "name": "notion-cms-worker-dev",
