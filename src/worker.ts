@@ -6,13 +6,23 @@ interface Env {
   NOTION_CMS_WEBHOOKS: KVNamespace;
 }
 
+interface NotionMapping {
+  statusProperty: {
+    id: string;
+    acceptedValues: string[];
+  };
+  republishProp: {
+    id: string;
+  };
+}
+
 interface UserData {
-  verification_secret: string;
+  verificationSecret: string;
   // other user data...
-  notion_token: string;
-  webhook_url?: string;
-  notion_mapping?: object;
-  html_mapping?: object;
+  notionToken: string;
+  webhookUrl?: string;
+  notionMapping?: NotionMapping;
+  htmlMapping?: object;
 }
 
 interface NotionWebhookPayload {
@@ -95,7 +105,7 @@ export default {
       const isTrustedPayload = await validateWebhookSignature(
         body,
         notionSignature,
-        userData.verification_secret
+        userData.verificationSecret
       );
 
       if (!isTrustedPayload) {
@@ -161,7 +171,7 @@ export default {
       );
 
       const notion = new Client({
-        auth: userData.notion_token,
+        auth: userData.notionToken,
         fetch: fetch.bind(globalThis),
       });
 
@@ -169,6 +179,107 @@ export default {
 
       try {
         const page = await notion.pages.retrieve({ page_id: pageId });
+
+        // Check if notionMapping exists
+        if (!userData.notionMapping) {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: "No notion mapping configured - ignoring webhook",
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        const notionMapping: NotionMapping = userData.notionMapping;
+        const statusProperty = notionMapping.statusProperty;
+        const republishProp = notionMapping.republishProp;
+
+        // 1. Check if the updated property is either statusProperty.id or republishProp.id
+        const updatedProperties = payload.data.updated_properties || [];
+        let relevantPropertyId: string | null = null;
+        let isStatusProperty = updatedProperties.includes(statusProperty.id);
+        let isRepublishProperty = updatedProperties.includes(republishProp.id);
+
+        // If no relevant property was updated, ignore the webhook
+        if (!isStatusProperty && !isRepublishProperty) {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: "Updated properties are not relevant - ignoring webhook",
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        // 2. Check that the statusProp.acceptedValues matches the actual page property value
+        if (
+          isStatusProperty &&
+          statusProperty.acceptedValues &&
+          relevantPropertyId
+        ) {
+          const pageProperties = (page as any).properties;
+          const propertyValue = pageProperties[relevantPropertyId];
+
+          let actualValue: string | null = null;
+
+          // Extract the actual value based on property type
+          if (propertyValue?.type === "select" && propertyValue.select) {
+            actualValue = propertyValue.select.name;
+          } else if (propertyValue?.type === "status" && propertyValue.status) {
+            actualValue = propertyValue.status.name;
+          } else if (
+            propertyValue?.type === "multi_select" &&
+            propertyValue.multi_select?.length > 0
+          ) {
+            actualValue = propertyValue.multi_select[0].name;
+          }
+
+          // Check if the actual value is in acceptedValues
+          if (
+            actualValue &&
+            !statusProperty.acceptedValues.includes(actualValue)
+          ) {
+            return new Response(
+              JSON.stringify({
+                success: true,
+                message: `Property value "${actualValue}" is not in accepted values - ignoring webhook`,
+              }),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              }
+            );
+          }
+        }
+
+        // 3. If everything is okay, get the page blocks
+        const blocks = await notion.blocks.children.list({
+          block_id: pageId,
+        });
+
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: "Webhook processed successfully",
+            eventId,
+            userId,
+            pageId,
+            relevantProperty: relevantPropertyId,
+            isStatusProperty,
+            blocksCount: blocks.results.length,
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
       } catch (error) {
         console.error("Error retrieving page:", error);
         return new Response(
@@ -182,19 +293,6 @@ export default {
           }
         );
       }
-
-      return new Response(
-        JSON.stringify({
-          success: true,
-          message: "Webhook received and stored",
-          eventId,
-          userId,
-        }),
-        {
-          status: 200,
-          headers: { "Content-Type": "application/json" },
-        }
-      );
     } catch (error) {
       console.error("Error processing webhook:", error);
       return new Response(
