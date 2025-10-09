@@ -195,14 +195,25 @@ export default {
         }
 
         const notionMapping: NotionMapping = userData.notionMapping;
-        const statusProperty = notionMapping.statusProperty;
-        const republishProp = notionMapping.republishProp;
+        const pageStatusProperty = await notion.pages.properties.retrieve({
+          page_id: pageId,
+          property_id: notionMapping.statusProperty.id,
+        });
+        const pageRepublishProperty = await notion.pages.properties.retrieve({
+          page_id: pageId,
+          property_id: notionMapping.republishProp.id,
+        });
+        const mappedStatusProperty = notionMapping.statusProperty;
+        const mappedRepublishProperty = notionMapping.republishProp;
 
         // 1. Check if the updated property is either statusProperty.id or republishProp.id
         const updatedProperties = payload.data.updated_properties || [];
-        let relevantPropertyId: string | null = null;
-        let isStatusProperty = updatedProperties.includes(statusProperty.id);
-        let isRepublishProperty = updatedProperties.includes(republishProp.id);
+        let isStatusProperty = updatedProperties.includes(
+          mappedStatusProperty.id
+        );
+        let isRepublishProperty = updatedProperties.includes(
+          mappedRepublishProperty.id
+        );
 
         // If no relevant property was updated, ignore the webhook
         if (!isStatusProperty && !isRepublishProperty) {
@@ -219,33 +230,26 @@ export default {
         }
 
         // 2. Check that the statusProp.acceptedValues matches the actual page property value
-        if (
-          isStatusProperty &&
-          statusProperty.acceptedValues &&
-          relevantPropertyId
-        ) {
-          const pageProperties = (page as any).properties;
-          const propertyValue = pageProperties[relevantPropertyId];
-
-          let actualValue: string | null = null;
-
-          // Extract the actual value based on property type
-          if (propertyValue?.type === "select" && propertyValue.select) {
-            actualValue = propertyValue.select.name;
-          } else if (propertyValue?.type === "status" && propertyValue.status) {
-            actualValue = propertyValue.status.name;
-          } else if (
-            propertyValue?.type === "multi_select" &&
-            propertyValue.multi_select?.length > 0
-          ) {
-            actualValue = propertyValue.multi_select[0].name;
+        if (isStatusProperty) {
+          // Type guard to ensure we have a status property
+          if (pageStatusProperty.type !== "status") {
+            return new Response(
+              JSON.stringify({
+                success: true,
+                message:
+                  "Expected status property but got different type - ignoring webhook",
+              }),
+              {
+                status: 200,
+                headers: { "Content-Type": "application/json" },
+              }
+            );
           }
 
+          const actualValue = pageStatusProperty.status?.name
+
           // Check if the actual value is in acceptedValues
-          if (
-            actualValue &&
-            !statusProperty.acceptedValues.includes(actualValue)
-          ) {
+          if (actualValue && !mappedStatusProperty.acceptedValues.includes(actualValue)) {
             return new Response(
               JSON.stringify({
                 success: true,
@@ -260,7 +264,7 @@ export default {
         }
 
         // 3. If everything is okay, get the page blocks
-        const blocks = await notion.blocks.children.list({
+        const pageBlocks = await notion.blocks.children.list({
           block_id: pageId,
         });
 
@@ -271,9 +275,12 @@ export default {
             eventId,
             userId,
             pageId,
-            relevantProperty: relevantPropertyId,
+            relevantProperty: isStatusProperty
+              ? mappedStatusProperty.id
+              : mappedRepublishProperty.id,
             isStatusProperty,
-            blocksCount: blocks.results.length,
+            isRepublishProperty,
+            blocksCount: pageBlocks.results.length,
           }),
           {
             status: 200,
