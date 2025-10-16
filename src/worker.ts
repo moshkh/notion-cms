@@ -1,5 +1,6 @@
 // Web Crypto API is available globally in Cloudflare Workers
 import { Client } from "@notionhq/client";
+import { CheckboxPropertyItemObjectResponse } from "@notionhq/client/build/src/api-endpoints";
 
 interface Env {
   NOTION_CMS_USERS: KVNamespace;
@@ -9,7 +10,8 @@ interface Env {
 interface NotionMapping {
   statusProperty: {
     id: string;
-    acceptedValues: string[];
+    draft: string;
+    published: string;
   };
   republishProp: {
     id: string;
@@ -84,6 +86,22 @@ export default {
 
       const userData: UserData = JSON.parse(userDataStr);
 
+      // Check if notion mapping is configured
+      if (!userData.notionMapping) {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: "No notion mapping configured - ignoring webhook",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      const notionMapping: NotionMapping = userData.notionMapping;
+
       // Get the request body for signature validation
       const body = await request.text();
       const notionSignature = request.headers.get("X-Notion-Signature");
@@ -152,17 +170,54 @@ export default {
         );
       }
 
-      // Generate a unique ID for this webhook event
-      const eventId = crypto.randomUUID();
+      // Check if the updated property is either statusProperty.id or republishProp.id
+      const mappedStatusProperty = notionMapping.statusProperty;
+      const mappedRepublishProperty = notionMapping.republishProp;
+      const updatedProperties = payload.data.updated_properties || [];
+      let isStatusProperty = updatedProperties.includes(
+        mappedStatusProperty.id
+      );
+      let isRepublishProperty = updatedProperties.includes(
+        mappedRepublishProperty.id
+      );
+
+      // If no relevant property was updated, ignore the webhook
+      if (!isStatusProperty && !isRepublishProperty) {
+        return new Response(
+          JSON.stringify({
+            success: true,
+            message: "Updated properties are not relevant - ignoring webhook",
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          }
+        );
+      }
+
+      // Generate a unique webhook ID
+      const uniqueWebhookId = crypto.randomUUID();
+
+      // Get the pageId from the payload
+      const pageId: string = payload.entity.id;
 
       // Store the webhook payload in KV with user context
+
+      const pageExists =
+        (
+          await env.NOTION_CMS_WEBHOOKS.list({
+            prefix: `webhook:${userId}-pageId:${pageId}`,
+          })
+        ).keys.length > 0;
+
       await env.NOTION_CMS_WEBHOOKS.put(
-        `webhook:${userId}:${eventId}`,
+        `webhook:${userId}-pageId:${pageId}-webhookId:${uniqueWebhookId}`,
         JSON.stringify({
           userId,
+          uniqueWebhookId,
           payload,
           timestamp: Date.now(),
-          eventId,
+          pageId,
         }),
         {
           // Optional: set expiration time (e.g., 180 days)
@@ -175,52 +230,28 @@ export default {
         fetch: fetch.bind(globalThis),
       });
 
-      const pageId: string = payload.entity.id;
-
       try {
         const page = await notion.pages.retrieve({ page_id: pageId });
 
         // Check if notionMapping exists
-        if (!userData.notionMapping) {
-          return new Response(
-            JSON.stringify({
-              success: true,
-              message: "No notion mapping configured - ignoring webhook",
-            }),
-            {
-              status: 200,
-              headers: { "Content-Type": "application/json" },
-            }
-          );
-        }
-
-        const notionMapping: NotionMapping = userData.notionMapping;
         const pageStatusProperty = await notion.pages.properties.retrieve({
           page_id: pageId,
           property_id: notionMapping.statusProperty.id,
         });
-        const pageRepublishProperty = await notion.pages.properties.retrieve({
+        const pageRepublishProperty = (await notion.pages.properties.retrieve({
           page_id: pageId,
           property_id: notionMapping.republishProp.id,
-        });
-        const mappedStatusProperty = notionMapping.statusProperty;
-        const mappedRepublishProperty = notionMapping.republishProp;
+        })) as CheckboxPropertyItemObjectResponse;
+        const republishChecked = pageRepublishProperty.checkbox;
 
-        // 1. Check if the updated property is either statusProperty.id or republishProp.id
-        const updatedProperties = payload.data.updated_properties || [];
-        let isStatusProperty = updatedProperties.includes(
-          mappedStatusProperty.id
-        );
-        let isRepublishProperty = updatedProperties.includes(
-          mappedRepublishProperty.id
-        );
-
-        // If no relevant property was updated, ignore the webhook
-        if (!isStatusProperty && !isRepublishProperty) {
+        // Always check the current status, regardless of which property was updated
+        // Type guard to ensure we have a status property
+        if (pageStatusProperty.type !== "status") {
           return new Response(
             JSON.stringify({
               success: true,
-              message: "Updated properties are not relevant - ignoring webhook",
+              message:
+                "Expected status property but got different type - ignoring webhook",
             }),
             {
               status: 200,
@@ -229,38 +260,68 @@ export default {
           );
         }
 
-        // 2. Check that the statusProp.acceptedValues matches the actual page property value
-        if (isStatusProperty) {
-          // Type guard to ensure we have a status property
-          if (pageStatusProperty.type !== "status") {
-            return new Response(
-              JSON.stringify({
-                success: true,
-                message:
-                  "Expected status property but got different type - ignoring webhook",
-              }),
-              {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-              }
-            );
-          }
+        const actualValue = pageStatusProperty.status?.name;
+        let isDraft = false;
+        let isPublished = false;
+        isDraft = mappedStatusProperty.draft === actualValue;
+        isPublished = mappedStatusProperty.published === actualValue;
 
-          const actualValue = pageStatusProperty.status?.name
+        // Check if the actual value is in acceptedValues
+        if (!isDraft && !isPublished) {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: `Property value "${actualValue}" is not in accepted values - ignoring webhook`,
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
 
-          // Check if the actual value is in acceptedValues
-          if (actualValue && !mappedStatusProperty.acceptedValues.includes(actualValue)) {
-            return new Response(
-              JSON.stringify({
-                success: true,
-                message: `Property value "${actualValue}" is not in accepted values - ignoring webhook`,
-              }),
-              {
-                status: 200,
-                headers: { "Content-Type": "application/json" },
-              }
-            );
-          }
+        // IGNORE: New pages set to publish (regardless of republish status)
+        if (!pageExists && isPublished) {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message:
+                "Page does not exist and has been changed to published - ignoring webhook",
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        // IGNORE: Existing pages set to draft (regardless of republish status)
+        if (pageExists && isDraft) {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message: "Existing page set to draft - ignoring webhook",
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        // IGNORE: Existing published pages without republish checked
+        if (pageExists && isPublished && !republishChecked) {
+          return new Response(
+            JSON.stringify({
+              success: true,
+              message:
+                "Existing published page without republish checked - ignoring webhook",
+            }),
+            {
+              status: 200,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
         }
 
         // 3. If everything is okay, get the page blocks
@@ -272,7 +333,6 @@ export default {
           JSON.stringify({
             success: true,
             message: "Webhook processed successfully",
-            eventId,
             userId,
             pageId,
             relevantProperty: isStatusProperty
