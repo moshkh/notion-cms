@@ -1,0 +1,19 @@
+{
+  // Media worker configuration
+  "name": "notion-cms-media-worker",
+  "main": "worker.ts",
+  "compatibility_date": "2024-10-06",
+  "r2_buckets": [
+    {
+      "binding": "MEDIA_CDN",
+      "bucket_name": "notion-cms-cdn"
+    }
+  ],
+  "vars": {
+    "MEDIA_SECRET_KEY": "slnqffgxhnrlarxtidadrlmogufpdrdbeyolqocydwxwpsae",
+    "R2_PUBLIC_URL": "https://pub-1471e1f8f3c94bf3ac71482c221801f3.r2.dev"
+  },
+  "observability": {
+    "enabled": true
+  }
+}

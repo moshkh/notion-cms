@@ -1,12 +1,8 @@
 {
-  // Name of your worker
+  // Blog fetch worker configuration
   "name": "notion-cms-worker",
-  // Main entry point
-  "main": "src/worker.ts",
-  // Compatibility date for Cloudflare Workers runtime
+  "main": "worker.ts",
   "compatibility_date": "2024-10-06",
-  // Define environments
-  // KV namespace configuration
   "kv_namespaces": [
     {
       "binding": "NOTION_CMS_USERS",
@@ -17,6 +13,15 @@
       "id": "7fb54e8411694a81803e46c87089bcbe"
     }
   ],
+  "services": [
+    {
+      "binding": "MEDIA_WORKER",
+      "service": "notion-cms-media-worker"
+    }
+  ],
+  "vars": {
+    "MEDIA_SECRET_KEY": "slnqffgxhnrlarxtidadrlmogufpdrdbeyolqocydwxwpsae"
+  },
   "observability": {
     "enabled": true
   },
@@ -26,14 +31,23 @@
       "kv_namespaces": [
         {
           "binding": "NOTION_CMS_USERS",
-          "id": "aad330a4ce88401984baf9f48d30b730" // Same ID for shared data
+          "id": "aad330a4ce88401984baf9f48d30b730"
         },
         {
           "binding": "NOTION_CMS_WEBHOOKS",
           "id": "7fb54e8411694a81803e46c87089bcbe"
         }
       ],
-      "inherit": true
+      "inherit": true,
+      "services": [
+        {
+          "binding": "MEDIA_WORKER",
+          "service": "notion-cms-media-worker"
+        }
+      ],
+      "vars": {
+        "MEDIA_SECRET_KEY": "slnqffgxhnrlarxtidadrlmogufpdrdbeyolqocydwxwpsae"
+      }
     }
   }
 }

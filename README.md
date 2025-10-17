@@ -12,14 +12,24 @@ This project provides seamless integration between Notion's collaborative editin
 
 ## Environment Variables
 
+### For blogFetchWorker
+
 Before running the project, you'll need to set up the following environment variables. Create a `.env` file in the root directory and add these variables:
 
 ```env
-# Notion Integration
-NOTION_API_KEY=your_notion_integration_token
-NOTION_DATABASE_ID=your_database_id
+- NOTION_API_KEY=your_notion_integration_token
+- NOTION_DATABASE_ID=your_database_id
+- MEDIA_SECRET_KEY=secret_used_to_verify_upload
+```
 
 # Add additional environment variables here as the project grows
+```
+
+### For mediaWorker
+
+```env
+- MEDIA_SECRET_KEY=secret_used_to_verify_upload
+- R2_PUBLIC_URL=base_url_to_access_files
 ```
 
 ## Installation
