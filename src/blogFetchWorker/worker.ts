@@ -23,6 +23,7 @@ interface NotionMapping {
     schemas: string;
     blogCopy: string;
   };
+  schemas?: Record<string, string>;
 }
 
 interface UserData {
@@ -486,6 +487,62 @@ async function processBlocksRecursively(
   return processedBlocks;
 }
 
+// Function to extract schema contents from toggle heading_2 blocks
+async function extractSchemaContents(
+  schemas: any[],
+  notion: Client,
+  userMapping: any
+): Promise<Record<string, string>> {
+  const schemaContents: Record<string, string> = {};
+
+  // Filter for heading_2 blocks that match the user mapping
+  const schemaHeadings = schemas.filter(
+    (block) =>
+      block.type === "heading_2" && block.heading_2?.is_toggleable === true
+  );
+
+  for (const heading of schemaHeadings) {
+    const headingText = extractTextContent(heading.heading_2?.rich_text || []);
+
+    // Check if this heading matches any of the user's schema mappings
+    const mappingKey = Object.keys(userMapping).find(
+      (key) => userMapping[key] === headingText
+    );
+
+    if (mappingKey) {
+      // Get children of this toggle heading
+      try {
+        const childrenResponse = await notion.blocks.children.list({
+          block_id: heading.id,
+        });
+
+        // Look for code blocks in the children
+        const codeBlocks = childrenResponse.results.filter(
+          (child) => "type" in child && child.type === "code"
+        );
+
+        if (codeBlocks.length > 0) {
+          // Take the first code block's content
+          const firstCodeBlock = codeBlocks[0];
+          if ("code" in firstCodeBlock && firstCodeBlock.code) {
+            const codeContent = extractTextContent(
+              firstCodeBlock.code.rich_text || []
+            );
+            schemaContents[mappingKey] = codeContent;
+          }
+        }
+      } catch (error) {
+        console.error(
+          `Error fetching children for schema heading ${headingText}:`,
+          error
+        );
+      }
+    }
+  }
+
+  return schemaContents;
+}
+
 // Function to generate complete HTML from processed blocks
 function generateCompleteHtml(processedBlocks: ProcessedBlock[]): string {
   const result: string[] = [];
@@ -843,7 +900,7 @@ export default {
         }
 
         // Fetch all children of schemas block (handling pagination)
-        let schemaBlocks = [];
+        let schemas = [];
         let nextCursor = undefined;
 
         do {
@@ -853,7 +910,7 @@ export default {
             page_size: 100, // Maximum allowed by Notion API
           });
 
-          schemaBlocks.push(...response.results);
+          schemas.push(...response.results);
           nextCursor = response.next_cursor;
         } while (nextCursor);
 
@@ -889,6 +946,16 @@ export default {
         // Generate complete HTML
         const blogHtml = generateCompleteHtml(processedBlocksWithMedia);
 
+        // Extract schema contents if schemas mapping is available
+        let schemaContents: Record<string, string> = {};
+        if (notionMapping.schemas) {
+          schemaContents = await extractSchemaContents(
+            schemas,
+            notion,
+            notionMapping.schemas
+          );
+        }
+
         return new Response(
           JSON.stringify({
             success: true,
@@ -898,7 +965,7 @@ export default {
             status: statusValue,
             pageExists,
             blocksCount: pageBlocks.results.length,
-            completeHtml: blogHtml, // Add this line
+            completeHtml: blogHtml,
           }),
           {
             status: 200,
