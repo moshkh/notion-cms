@@ -19,11 +19,19 @@ interface NotionMapping {
     published: string;
     republish: string;
   };
+  publishAtProperty: {
+    id: string;
+  };
   parentBlocks: {
     schemas: string;
     blogCopy: string;
   };
-  schemas?: Record<string, string>;
+  schemas: Record<string, string>;
+  apiEndpoint?: {
+    sendToApi: boolean;
+    url: string | null;
+  };
+  timezone: string;
 }
 
 interface UserData {
@@ -485,6 +493,82 @@ async function processBlocksRecursively(
   }
 
   return processedBlocks;
+}
+
+// Function to update Notion page status and publishAt date
+async function updateNotionPageStatus(
+  notion: Client,
+  pageId: string,
+  statusPropertyId: string,
+  publishedStatusValue: string,
+  publishAtPropertyId: string,
+  timezone?: string
+): Promise<boolean> {
+  try {
+    // Get current date and time
+    const now = new Date();
+    const isoString = now.toISOString().slice(0, -1);
+
+    // Use provided timezone or default to UTC
+    const timeZone = timezone || "UTC";
+
+    // Build the properties update payload
+    const properties: any = {
+      [statusPropertyId]: {
+        status: {
+          name: publishedStatusValue,
+        },
+      },
+      [publishAtPropertyId]: {
+        date: {
+          start: isoString,
+          time_zone: timeZone,
+        },
+      },
+    };
+
+    // Update the page properties
+    await notion.pages.update({
+      page_id: pageId,
+      properties: properties,
+    });
+
+    return true;
+  } catch (error) {
+    console.error("Error updating Notion page status:", error);
+    return false;
+  }
+}
+
+// Function to send payload to API endpoint
+async function sendToApiEndpoint(
+  apiUrl: string,
+  payload: Record<string, any>
+): Promise<boolean> {
+  try {
+
+    const response = await fetch(apiUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      console.error(
+        `API call failed with status ${response.status}: ${response.statusText}`
+      );
+      const errorText = await response.text();
+      console.error("API error response:", errorText);
+      return false;
+    }
+  
+    return true;
+  } catch (error) {
+    console.error("Error sending to API endpoint:", error);
+    return false;
+  }
 }
 
 // Function to extract schema contents from toggle heading_2 blocks
@@ -956,16 +1040,70 @@ export default {
           );
         }
 
+        // Send to API endpoint if configured
+        let apiCallSuccess = false;
+        if (
+          notionMapping.apiEndpoint?.sendToApi &&
+          notionMapping.apiEndpoint?.url
+        ) {
+          // Build the API payload
+          const apiPayload: Record<string, any> = {
+            html: blogHtml,
+            metadata: {}, // TODO: Extract metadata if needed
+            ...schemaContents, // Spread schema contents using their keys
+          };
+
+          apiCallSuccess = await sendToApiEndpoint(
+            notionMapping.apiEndpoint.url,
+            apiPayload
+          );
+
+          // Only proceed if API call was successful
+          if (!apiCallSuccess) {
+            return new Response(
+              JSON.stringify({
+                success: false,
+                message: "API call failed - Notion page not updated",
+              }),
+              {
+                status: 500,
+                headers: { "Content-Type": "application/json" },
+              }
+            );
+          }
+        }
+
+        // At this point, either API call succeeded or no API call was needed
+        // Always update Notion page status and publishAt date
+        const timezone = notionMapping.timezone || "UTC";
+
+        const notionUpdateSuccess = await updateNotionPageStatus(
+          notion,
+          pageId,
+          notionMapping.statusProperty.id,
+          notionMapping.statusProperty.published,
+          notionMapping.publishAtProperty.id,
+          timezone
+        );
+
+        if (!notionUpdateSuccess) {
+          return new Response(
+            JSON.stringify({
+              success: false,
+              message: "Failed to update Notion page properties",
+            }),
+            {
+              status: 500,
+              headers: { "Content-Type": "application/json" },
+            }
+          );
+        }
+
+        // Return simple acknowledgment
         return new Response(
           JSON.stringify({
             success: true,
             message: "Webhook processed successfully",
-            userId,
-            pageId,
-            status: statusValue,
-            pageExists,
-            blocksCount: pageBlocks.results.length,
-            completeHtml: blogHtml,
           }),
           {
             status: 200,
