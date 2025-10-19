@@ -495,6 +495,28 @@ async function processBlocksRecursively(
   return processedBlocks;
 }
 
+// Function to get local ISO string in specified timezone
+function getLocalIsoString(timeZone: string, date = new Date()) {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: false,
+  });
+
+  const parts = formatter.formatToParts(date);
+  const values: Record<string, string> = {};
+  parts.forEach(({ type, value }) => {
+    if (type !== "literal") values[type] = value;
+  });
+
+  return `${values.year}-${values.month}-${values.day}T${values.hour}:${values.minute}:${values.second}`;
+}
+
 // Function to update Notion page status and publishAt date
 async function updateNotionPageStatus(
   notion: Client,
@@ -505,12 +527,11 @@ async function updateNotionPageStatus(
   timezone?: string
 ): Promise<boolean> {
   try {
-    // Get current date and time
-    const now = new Date();
-    const isoString = now.toISOString().slice(0, -1);
-
     // Use provided timezone or default to UTC
     const timeZone = timezone || "UTC";
+
+    // Get current date and time in the specified timezone
+    const localIsoString = getLocalIsoString(timeZone);
 
     // Build the properties update payload
     const properties: any = {
@@ -521,7 +542,7 @@ async function updateNotionPageStatus(
       },
       [publishAtPropertyId]: {
         date: {
-          start: isoString,
+          start: localIsoString,
           time_zone: timeZone,
         },
       },
@@ -546,7 +567,6 @@ async function sendToApiEndpoint(
   payload: Record<string, any>
 ): Promise<boolean> {
   try {
-
     const response = await fetch(apiUrl, {
       method: "POST",
       headers: {
@@ -563,7 +583,7 @@ async function sendToApiEndpoint(
       console.error("API error response:", errorText);
       return false;
     }
-  
+
     return true;
   } catch (error) {
     console.error("Error sending to API endpoint:", error);
