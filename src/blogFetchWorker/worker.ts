@@ -19,6 +19,9 @@ interface NotionMapping {
     published: string;
     republish: string;
   };
+  slugProperty: {
+    id: string;
+  };
   publishAtProperty: {
     id: string;
   };
@@ -69,10 +72,10 @@ interface MediaUploadResponse {
 }
 
 interface AssetData {
-  name: string; 
-  placeholder: string; 
-  url: string; 
-  type: "image" | "video"; 
+  name: string;
+  placeholder: string;
+  url: string;
+  type: "image" | "video";
   alt?: string;
 }
 
@@ -1321,6 +1324,27 @@ export default {
           assetData
         );
 
+        // Get the slug property value from the page
+        let slugValue: string | null = null;
+        try {
+          const pageSlugProperty = await notion.pages.properties.retrieve({
+            page_id: pageId,
+            property_id: notionMapping.slugProperty.id,
+          });
+
+          // Extract slug value from rich_text property
+          if (
+            pageSlugProperty.type === "rich_text" &&
+            pageSlugProperty.rich_text &&
+            Array.isArray(pageSlugProperty.rich_text) &&
+            pageSlugProperty.rich_text.length > 0
+          ) {
+            slugValue = extractTextContent(pageSlugProperty.rich_text);
+          }
+        } catch (error) {
+          console.error("Error retrieving slug property:", error);
+        }
+
         // Send to API endpoint if configured
         let apiCallSuccess = false;
         if (
@@ -1330,6 +1354,8 @@ export default {
           // Build the API payload
           const apiPayload: Record<string, any> = {
             html: blogHtml,
+            pageId: pageId,
+            slug: slugValue,
             metadata: {
               assets: assetData, // Include asset data in metadata
             },
