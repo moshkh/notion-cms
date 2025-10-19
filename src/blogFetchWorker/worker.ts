@@ -25,6 +25,7 @@ interface NotionMapping {
   parentBlocks: {
     schemas: string;
     blogCopy: string;
+    assets: string; // New: Assets heading name
   };
   schemas: Record<string, string>;
   apiEndpoint?: {
@@ -65,6 +66,14 @@ interface MediaUploadResponse {
   url: string;
   key: string;
   success: boolean;
+}
+
+interface AssetData {
+  name: string; 
+  placeholder: string; 
+  url: string; 
+  type: "image" | "video"; 
+  alt?: string;
 }
 
 // Allowed block types for processing
@@ -591,6 +600,96 @@ async function sendToApiEndpoint(
   }
 }
 
+// Function to extract assets from Assets heading section
+async function extractAssets(
+  assets: any[],
+  notion: Client,
+  userId: string,
+  secretKey: string,
+  mediaWorker: Fetcher
+): Promise<AssetData[]> {
+  const assetData: AssetData[] = [];
+
+  // Filter for heading_2 blocks that are toggleable (asset containers)
+  const assetHeadings = assets.filter(
+    (block) =>
+      block.type === "heading_2" && block.heading_2?.is_toggleable === true
+  );
+
+  for (const heading of assetHeadings) {
+    const headingText = extractTextContent(heading.heading_2?.rich_text || []);
+
+    if (!headingText) continue;
+
+    // Generate placeholder format: "Cover Image" -> "{{Cover_Image}}"
+    const placeholder = `{{${headingText.replace(/\s+/g, "_")}}}`;
+
+    try {
+      // Get children of this toggle heading
+      const childrenResponse = await notion.blocks.children.list({
+        block_id: heading.id,
+      });
+
+      // Look for image or video blocks in the children
+      const mediaBlocks = childrenResponse.results.filter(
+        (child) =>
+          "type" in child && (child.type === "image" || child.type === "video")
+      );
+
+      if (mediaBlocks.length > 0) {
+        // Take the first media block
+        const mediaBlock = mediaBlocks[0];
+
+        if (
+          "type" in mediaBlock &&
+          (mediaBlock.type === "image" || mediaBlock.type === "video")
+        ) {
+          const mediaUrl = extractMediaUrl(mediaBlock);
+
+          if (mediaUrl) {
+            // Skip YouTube videos as they don't need uploading
+            let uploadedUrl = mediaUrl;
+            if (!(mediaBlock.type === "video" && isYouTubeUrl(mediaUrl))) {
+              // Upload media to media worker
+              const uploaded = await uploadMediaToWorker(
+                mediaUrl,
+                mediaBlock.type as "image" | "video",
+                userId,
+                `asset-${heading.id}`,
+                secretKey,
+                mediaWorker
+              );
+              uploadedUrl = uploaded || mediaUrl;
+            }
+
+            // Extract alt text for images
+            let alt: string | undefined;
+            if (mediaBlock.type === "image" && "image" in mediaBlock) {
+              alt =
+                richTextToHtml(mediaBlock.image?.caption || []) || undefined;
+            }
+
+            assetData.push({
+              name: headingText,
+              placeholder,
+              url: uploadedUrl,
+              type: mediaBlock.type as "image" | "video",
+              alt,
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error(
+        `Error fetching children for asset heading ${headingText}:`,
+        error
+      );
+    }
+  }
+
+  return assetData;
+}
+
 // Function to extract schema contents from toggle heading_2 blocks
 async function extractSchemaContents(
   schemas: any[],
@@ -645,6 +744,125 @@ async function extractSchemaContents(
   }
 
   return schemaContents;
+}
+
+// Function to process asset placeholders in HTML (only in heading 3 blocks)
+function processAssetPlaceholdersInHtml(
+  processedBlocks: ProcessedBlock[],
+  assets: AssetData[]
+): ProcessedBlock[] {
+  if (assets.length === 0) return processedBlocks;
+
+  // Create a map for quick asset lookup
+  const assetMap = new Map<string, AssetData>();
+  assets.forEach((asset) => {
+    assetMap.set(asset.placeholder, asset);
+  });
+
+  return processedBlocks.map((block) => {
+    // Only process heading_3 blocks for asset placeholders
+    if (block.type === "heading_3" && block.content) {
+      let updatedContent = block.content;
+      let updatedHtml = block.html;
+
+      // Find and replace asset placeholders
+      for (const [placeholder, asset] of assetMap) {
+        if (updatedContent.includes(placeholder)) {
+          // Check if the placeholder is the entire content of the heading
+          const trimmedContent = updatedContent.trim();
+          if (trimmedContent === placeholder) {
+            // Replace the entire h3 block with just the media tag
+            if (asset.type === "image") {
+              const altText = asset.alt || asset.name;
+              updatedHtml = `<img src="${asset.url}" alt="${altText}" />`;
+            } else if (asset.type === "video") {
+              if (isYouTubeUrl(asset.url)) {
+                const embedUrl = getYouTubeEmbedUrl(asset.url);
+                updatedHtml = `<iframe src="${embedUrl}" frameborder="0" allowfullscreen></iframe>`;
+              } else {
+                updatedHtml = `<video src="${asset.url}" controls></video>`;
+              }
+            }
+            // Update content to just the asset name
+            updatedContent = asset.name;
+          } else {
+            // Placeholder is mixed with other text, replace inline
+            updatedContent = updatedContent.replace(
+              new RegExp(placeholder, "g"),
+              asset.name
+            );
+
+            // Replace placeholder in HTML with appropriate media tag
+            let mediaHtml = "";
+            if (asset.type === "image") {
+              const altText = asset.alt || asset.name;
+              mediaHtml = `<img src="${asset.url}" alt="${altText}" />`;
+            } else if (asset.type === "video") {
+              if (isYouTubeUrl(asset.url)) {
+                const embedUrl = getYouTubeEmbedUrl(asset.url);
+                mediaHtml = `<iframe src="${embedUrl}" frameborder="0" allowfullscreen></iframe>`;
+              } else {
+                mediaHtml = `<video src="${asset.url}" controls></video>`;
+              }
+            }
+
+            updatedHtml = updatedHtml.replace(
+              new RegExp(placeholder, "g"),
+              mediaHtml
+            );
+          }
+        }
+      }
+
+      return {
+        ...block,
+        content: updatedContent,
+        html: updatedHtml,
+      };
+    }
+
+    // Process children recursively if they exist
+    if (block.children && block.children.length > 0) {
+      return {
+        ...block,
+        children: processAssetPlaceholdersInHtml(block.children, assets),
+      };
+    }
+
+    return block;
+  });
+}
+
+// Function to process asset placeholders in JSON schemas (replace with URLs only)
+function processAssetPlaceholdersInSchemas(
+  schemaContents: Record<string, string>,
+  assets: AssetData[]
+): Record<string, string> {
+  if (assets.length === 0) return schemaContents;
+
+  // Create a map for quick asset lookup
+  const assetMap = new Map<string, AssetData>();
+  assets.forEach((asset) => {
+    assetMap.set(asset.placeholder, asset);
+  });
+
+  const processedSchemas: Record<string, string> = {};
+
+  for (const [key, content] of Object.entries(schemaContents)) {
+    let updatedContent = content;
+
+    // Replace asset placeholders with URLs
+    for (const [placeholder, asset] of assetMap) {
+      updatedContent = updatedContent.replace(
+        new RegExp(placeholder, "g"),
+        asset.url
+      );
+    }
+
+    processedSchemas[key] = updatedContent;
+  }
+
+  return processedSchemas;
 }
 
 // Function to generate complete HTML from processed blocks
@@ -975,7 +1193,9 @@ export default {
               ((block.heading_1.rich_text[0] as TextRichTextItemResponse).text
                 .content === notionMapping.parentBlocks.schemas ||
                 (block.heading_1.rich_text[0] as TextRichTextItemResponse).text
-                  .content === notionMapping.parentBlocks.blogCopy)
+                  .content === notionMapping.parentBlocks.blogCopy ||
+                (block.heading_1.rich_text[0] as TextRichTextItemResponse).text
+                  .content === notionMapping.parentBlocks.assets)
           )
           .reduce((acc, block) => {
             const content = (
@@ -990,6 +1210,7 @@ export default {
         // Get parent blocks and their children
         const blogCopyBlock = parentBlocks[notionMapping.parentBlocks.blogCopy];
         const schemasBlock = parentBlocks[notionMapping.parentBlocks.schemas];
+        const assetsBlock = parentBlocks[notionMapping.parentBlocks.assets];
 
         if (!blogCopyBlock || !schemasBlock) {
           return new Response(
@@ -1018,6 +1239,22 @@ export default {
           nextCursor = response.next_cursor;
         } while (nextCursor);
 
+        // Fetch all children of assets block if it exists (handling pagination)
+        let assets = [];
+        if (assetsBlock) {
+          nextCursor = undefined;
+          do {
+            const response = await notion.blocks.children.list({
+              block_id: assetsBlock.id,
+              start_cursor: nextCursor,
+              page_size: 100, // Maximum allowed by Notion API
+            });
+
+            assets.push(...response.results);
+            nextCursor = response.next_cursor;
+          } while (nextCursor);
+        }
+
         // Fetch all children of blogCopy block (handling pagination)
         let blogCopyBlocks = [];
         nextCursor = undefined;
@@ -1039,6 +1276,18 @@ export default {
           notion
         );
 
+        // Extract assets if assets block exists
+        let assetData: AssetData[] = [];
+        if (assetsBlock) {
+          assetData = await extractAssets(
+            assets,
+            notion,
+            userId,
+            env.MEDIA_SECRET_KEY,
+            env.MEDIA_WORKER
+          );
+        }
+
         // Process media uploads and update URLs
         const processedBlocksWithMedia = await processMediaUploads(
           processedBlocks,
@@ -1047,8 +1296,14 @@ export default {
           env.MEDIA_WORKER
         );
 
+        // Process asset placeholders in HTML (only in heading 3 blocks)
+        const processedBlocksWithAssets = processAssetPlaceholdersInHtml(
+          processedBlocksWithMedia,
+          assetData
+        );
+
         // Generate complete HTML
-        const blogHtml = generateCompleteHtml(processedBlocksWithMedia);
+        const blogHtml = generateCompleteHtml(processedBlocksWithAssets);
 
         // Extract schema contents if schemas mapping is available
         let schemaContents: Record<string, string> = {};
@@ -1060,6 +1315,12 @@ export default {
           );
         }
 
+        // Process asset placeholders in schemas (replace with URLs only)
+        const blogSchemas = processAssetPlaceholdersInSchemas(
+          schemaContents,
+          assetData
+        );
+
         // Send to API endpoint if configured
         let apiCallSuccess = false;
         if (
@@ -1069,8 +1330,10 @@ export default {
           // Build the API payload
           const apiPayload: Record<string, any> = {
             html: blogHtml,
-            metadata: {}, // TODO: Extract metadata if needed
-            ...schemaContents, // Spread schema contents using their keys
+            metadata: {
+              assets: assetData, // Include asset data in metadata
+            },
+            ...blogSchemas, // Spread processed schema contents using their keys
           };
 
           apiCallSuccess = await sendToApiEndpoint(
