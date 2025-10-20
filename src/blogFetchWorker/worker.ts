@@ -39,9 +39,8 @@ interface NotionMapping {
 }
 
 interface UserData {
-  verificationSecret: string;
-  // other user data...
-  notionToken: string;
+  verificationSecret: string; //notion webhook secret - generated when user creates a webhook
+  notionToken: string; //notion integration secret - generated when the user creates an integration in notion
   webhookUrl?: string;
   notionMapping?: NotionMapping;
   htmlMapping?: object;
