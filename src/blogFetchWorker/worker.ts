@@ -31,10 +31,6 @@ interface NotionMapping {
     assets: string; // New: Assets heading name
   };
   schemas: Record<string, string>;
-  apiEndpoint?: {
-    sendToApi: boolean;
-    url: string | null;
-  };
   timezone: string;
 }
 
@@ -44,6 +40,14 @@ interface UserData {
   webhookUrl?: string;
   notionMapping?: NotionMapping;
   htmlMapping?: object;
+  apiEndpoint?: {
+    sendToApi: boolean;
+    url: string | null;
+    headers?: Array<{
+      headerName: string;
+      headerValue: string;
+    }>;
+  };
 }
 
 interface NotionWebhookPayload {
@@ -575,14 +579,27 @@ async function updateNotionPageStatus(
 // Function to send payload to API endpoint
 async function sendToApiEndpoint(
   apiUrl: string,
-  payload: Record<string, any>
+  payload: Record<string, any>,
+  customHeaders?: Array<{ headerName: string; headerValue: string }>
 ): Promise<boolean> {
   try {
+    // Build headers object starting with default Content-Type
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+    };
+
+    // Add custom headers if provided
+    if (customHeaders && Array.isArray(customHeaders)) {
+      customHeaders.forEach(({ headerName, headerValue }) => {
+        if (headerName && headerValue) {
+          headers[headerName] = headerValue;
+        }
+      });
+    }
+
     const response = await fetch(apiUrl, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      headers,
       body: JSON.stringify(payload),
     });
 
@@ -1346,10 +1363,7 @@ export default {
 
         // Send to API endpoint if configured
         let apiCallSuccess = false;
-        if (
-          notionMapping.apiEndpoint?.sendToApi &&
-          notionMapping.apiEndpoint?.url
-        ) {
+        if (userData.apiEndpoint?.sendToApi && userData.apiEndpoint?.url) {
           // Build the API payload
           const apiPayload: Record<string, any> = {
             pageId: pageId,
@@ -1360,8 +1374,9 @@ export default {
           };
 
           apiCallSuccess = await sendToApiEndpoint(
-            notionMapping.apiEndpoint.url,
-            apiPayload
+            userData.apiEndpoint.url,
+            apiPayload,
+            userData.apiEndpoint.headers
           );
 
           // Only proceed if API call was successful
