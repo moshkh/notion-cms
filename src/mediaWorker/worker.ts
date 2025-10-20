@@ -76,7 +76,6 @@ export default {
         contentType.split("/")[1] ||
         (body.mediaType === "image" ? "jpg" : "mp4");
 
-      const uniqueId = crypto.randomUUID();
       const key = `${body.userId}/${body.mediaType}s/${body.blockId}.${fileExtension}`;
 
       // Upload to R2

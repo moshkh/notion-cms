@@ -11,7 +11,7 @@
   ],
   "vars": {
     "MEDIA_SECRET_KEY": "slnqffgxhnrlarxtidadrlmogufpdrdbeyolqocydwxwpsae",
-    "R2_PUBLIC_URL": "https://pub-1471e1f8f3c94bf3ac71482c221801f3.r2.dev"
+    "R2_PUBLIC_URL": "https://cdn.blogtion.app"
   },
   "observability": {
     "enabled": true
