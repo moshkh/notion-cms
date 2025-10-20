@@ -1352,12 +1352,10 @@ export default {
         ) {
           // Build the API payload
           const apiPayload: Record<string, any> = {
-            html: blogHtml,
             pageId: pageId,
             slug: slugValue,
-            metadata: {
-              assets: assetData, // Include asset data in metadata
-            },
+            html: blogHtml,
+            assets: assetData, // Include asset data in metadata
             ...blogSchemas, // Spread processed schema contents using their keys
           };
 
