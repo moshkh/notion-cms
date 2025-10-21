@@ -1,7 +1,9 @@
 // Web Crypto API is available globally in Cloudflare Workers
 import { Client } from "@notionhq/client";
 import {
+  GetPagePropertyResponse,
   Heading1BlockObjectResponse,
+  PropertyItemListResponse,
   TextRichTextItemResponse,
 } from "@notionhq/client/build/src/api-endpoints";
 
@@ -1343,19 +1345,21 @@ export default {
         // Get the slug property value from the page
         let slugValue: string | null = null;
         try {
-          const pageSlugProperty = await notion.pages.properties.retrieve({
+          const pageSlugProperty = (await notion.pages.properties.retrieve({
             page_id: pageId,
             property_id: notionMapping.slugProperty.id,
-          });
+          })) as PropertyItemListResponse;
 
           // Extract slug value from rich_text property
           if (
-            pageSlugProperty.type === "rich_text" &&
-            pageSlugProperty.rich_text &&
-            Array.isArray(pageSlugProperty.rich_text) &&
-            pageSlugProperty.rich_text.length > 0
+            pageSlugProperty.results &&
+            pageSlugProperty.results.length > 0 &&
+            pageSlugProperty.results[0].type === "rich_text"
           ) {
-            slugValue = extractTextContent(pageSlugProperty.rich_text);
+            // Wrap the single rich_text object in an array for extractTextContent
+            slugValue = extractTextContent([
+              pageSlugProperty.results[0].rich_text,
+            ]);
           }
         } catch (error) {
           console.error("Error retrieving slug property:", error);
