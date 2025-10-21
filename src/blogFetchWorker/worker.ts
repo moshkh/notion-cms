@@ -1373,7 +1373,7 @@ export default {
             pageId: pageId,
             slug: slugValue,
             html: blogHtml,
-            assets: assetData, // Include asset data in metadata
+            assets: assetData, // Include asset data
             ...blogSchemas, // Spread processed schema contents using their keys
           };
 
