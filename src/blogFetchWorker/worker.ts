@@ -1035,6 +1035,7 @@ export default {
       );
 
       if (!isTrustedPayload) {
+        console.log("notion webhook verification - payload body: ", body);
         return new Response(
           JSON.stringify({
             success: false,
