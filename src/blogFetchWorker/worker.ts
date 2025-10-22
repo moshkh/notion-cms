@@ -1365,6 +1365,29 @@ export default {
           console.error("Error retrieving slug property:", error);
         }
 
+        // Get the title property value from the page (title property ID is always "title")
+        let titleValue: string | null = null;
+        try {
+          const pageTitleProperty = (await notion.pages.properties.retrieve({
+            page_id: pageId,
+            property_id: "title",
+          })) as PropertyItemListResponse;
+
+          // Extract title value from title property
+          if (
+            pageTitleProperty.results &&
+            pageTitleProperty.results.length > 0 &&
+            pageTitleProperty.results[0].type === "title"
+          ) {
+            // Wrap the single title object in an array for extractTextContent
+            titleValue = extractTextContent([
+              pageTitleProperty.results[0].title,
+            ]);
+          }
+        } catch (error) {
+          console.error("Error retrieving title property:", error);
+        }
+
         // Send to API endpoint if configured
         let apiCallSuccess = false;
         if (userData.apiEndpoint?.sendToApi && userData.apiEndpoint?.url) {
@@ -1374,7 +1397,10 @@ export default {
             slug: slugValue,
             html: blogHtml,
             assets: assetData, // Include asset data
-            ...blogSchemas, // Spread processed schema contents using their keys
+            title: titleValue,
+            schemas: {
+              ...blogSchemas,
+            }, // Spread processed schema contents using their keys
           };
 
           apiCallSuccess = await sendToApiEndpoint(
